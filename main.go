@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hekmon/cunits/v2"
 	"github.com/hekmon/transmissionrpc/v3"
 	"go.etcd.io/bbolt"
 )
@@ -36,6 +37,7 @@ func main() {
 	dbfile := flag.String("db", "blocklist.db", "blocklist db path")
 	rpc := flag.String("rpc", "http://127.0.0.1:9091/transmission/rpc", "transmission rpc url")
 	lishost := flag.String("host", ":9092", "listen host")
+	flag.BoolVar(&iptEnabled, "iptables", false, "enable iptables")
 	flag.Parse()
 
 	_ = os.MkdirAll(filepath.Dir(*dbfile), 0755)
@@ -140,7 +142,7 @@ func main() {
 		regexps = append(regexps, rg)
 	}
 
-	timer := time.NewTicker(time.Minute * 1)
+	timer := time.NewTicker(time.Minute * 2)
 	defer timer.Stop()
 	go func() {
 		if err := run(cli, regexps, *blockfile); err != nil {
@@ -165,10 +167,25 @@ func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) err
 	}
 
 	clientAddress := []entry{}
+	torrents := []int64{}
+	stopTorrents := []int64{}
 
 	for _, v := range at {
 		if v.Status == nil || *v.Status != transmissionrpc.TorrentStatusSeed {
 			continue
+		}
+
+		if v.UploadRatio != nil && *v.UploadRatio >= 3 {
+			stopTorrents = append(stopTorrents, *v.ID)
+		} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*6 &&
+			v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
+			stopTorrents = append(stopTorrents, *v.ID)
+		} else if v.UploadRatio != nil && *v.UploadRatio >= 2.2 &&
+			v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*3 &&
+			v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
+			stopTorrents = append(stopTorrents, *v.ID)
+		} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*12 {
+			stopTorrents = append(stopTorrents, *v.ID)
 		}
 
 		if len(v.Peers) <= 0 {
@@ -177,8 +194,11 @@ func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) err
 
 		for _, p := range v.Peers {
 			for _, rg := range regexps {
-				if rg.MatchString(p.ClientName) {
+				if rg.MatchString(p.ClientName) || rg.MatchString(strings.ToLower(p.ClientName)) {
 					clientAddress = append(clientAddress, entry{addr: p.Address, client: p.ClientName})
+					if v.ID != nil {
+						torrents = append(torrents, *v.ID)
+					}
 					fmt.Println(p.Address, p.ClientName)
 				}
 			}
@@ -215,13 +235,50 @@ func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) err
 	defer bw.Flush()
 
 	// , HQ ENTERTAINMENT:71.127.117.96-71.127.117.103
-	_, _ = fmt.Fprintf(bw, "Test%d%s:%s-%s\n", 0, "", "127.0.0.1", "127.0.0.1")
+	// _, _ = fmt.Fprintf(bw, "Test%d%s:%s-%s\n", 0, "", "127.0.0.1", "127.0.0.1")
 
+	addresses := []string{}
 	rangeBlock(func(tx *bbolt.Bucket, v entry) {
-		_, _ = fmt.Fprintf(bw, "Autogen%s%d:%s-%s\n",
+		// _, _ = fmt.Fprintf(bw, "Autogen%s%d:%s-%s\n",
+		// strings.ReplaceAll(v.client, "-", ""), v.time, v.addr, v.addr)
 
-			strings.ReplaceAll(v.client, "-", ""), v.time, v.addr, v.addr)
+		addresses = append(addresses, v.addr)
+		_, _ = fmt.Fprintf(bw, "Autogen[%s]:%s-%s\n", v.client, v.addr, v.addr)
 	}, time.Hour*24*2)
+
+	if len(stopTorrents) > 0 {
+		log.Println("stop torrents", stopTorrents)
+		_ = cli.TorrentStopIDs(context.Background(), stopTorrents)
+	}
+
+	if iptEnabled {
+		if err := it(addresses); err != nil {
+			log.Println("it", err)
+		}
+	}
+
+	if iptEnabled || len(torrents) <= 0 {
+		return nil
+	}
+
+	log.Println("restart torrents", torrents)
+
+	err = cli.TorrentStopIDs(context.Background(), torrents)
+	if err != nil {
+		log.Println("TorrentStopIDs", torrents, err)
+	} else {
+		count := 0
+	_retry:
+		time.Sleep(time.Second * 3)
+		err = cli.TorrentStartIDs(context.Background(), torrents)
+		if err != nil {
+			log.Println("TorrentStartIDs", torrents, err)
+			count++
+			if count <= 3 {
+				goto _retry
+			}
+		}
+	}
 
 	return nil
 }
