@@ -1,0 +1,14 @@
+[Unit]
+Description=transmission-auto-ban
+Requires=
+
+[Service]
+WorkingDirectory=~/.config/transmission-auto-ban
+ExecStart=transmission-auto-ban
+Restart=always
+RestartSec=30
+Slice=transmission-auto-ban.slice
+
+[Install]
+Also=
+WantedBy=default.target
