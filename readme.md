@@ -1,9 +1,12 @@
 #
 
+it just ban who use bt client name in blacklist.  
+>maybe libtorrent and gt0003 need specify check method.  
+
 ## usage
 
 ```bash
 transmission-auto-ban -rpc http://username@password:127.0.0.1:9091/transmission/rpc -host :9092 -file blocklist.txt -db blocklist.db
 ```
 
-then enter `http://127.0.0.1:9092/blocklist.txt.gz` to transmission blocklist config.
+then enter `http://127.0.0.1:9092/blocklist.txt.gz` to transmission blacklist config.

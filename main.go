@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -119,37 +118,14 @@ func main() {
 		f.Close()
 	}
 
-	regexps := []*regexp.Regexp{}
-
-	for _, v := range []string{
-		"xunlei",
-		"thunder",
-		`gt[[:digit:]]{4}`,
-		`GT[[:digit:]]{4}`,
-		"xl0012",
-		"xf",
-		"dandanplay",
-		"dl3760",
-		"qq",
-		"libtorrent",
-	} {
-		rg, err := regexp.Compile(v)
-		if err != nil {
-			log.Println("compile", v, err)
-			continue
-		}
-
-		regexps = append(regexps, rg)
-	}
-
 	timer := time.NewTicker(time.Minute * 2)
 	defer timer.Stop()
 	go func() {
-		if err := run(cli, regexps, *blockfile); err != nil {
+		if err := run(cli, *blockfile); err != nil {
 			log.Println("run", err)
 		}
 		for range timer.C {
-			if err := run(cli, regexps, *blockfile); err != nil {
+			if err := run(cli, *blockfile); err != nil {
 				log.Println("run", err)
 			}
 		}
@@ -160,7 +136,7 @@ func main() {
 	}
 }
 
-func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) error {
+func run(cli *transmissionrpc.Client, path string) error {
 	at, err := cli.TorrentGetAll(context.Background())
 	if err != nil {
 		return err
@@ -193,14 +169,12 @@ func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) err
 		}
 
 		for _, p := range v.Peers {
-			for _, rg := range regexps {
-				if rg.MatchString(p.ClientName) || rg.MatchString(strings.ToLower(p.ClientName)) {
-					clientAddress = append(clientAddress, entry{addr: p.Address, client: p.ClientName})
-					if v.ID != nil {
-						torrents = append(torrents, *v.ID)
-					}
-					fmt.Println(p.Address, p.ClientName)
+			if regexps.MatchString(p.ClientName, strings.ToLower(p.ClientName)) {
+				clientAddress = append(clientAddress, entry{addr: p.Address, client: p.ClientName})
+				if v.ID != nil {
+					torrents = append(torrents, *v.ID)
 				}
+				fmt.Println(p.Address, p.ClientName)
 			}
 		}
 	}
@@ -210,9 +184,9 @@ func run(cli *transmissionrpc.Client, regexps []*regexp.Regexp, path string) err
 	defer func() {
 		entries, err := cli.BlocklistUpdate(context.Background())
 		if err != nil {
-			log.Println("BlocklistUpdate", err)
+			log.Println("BlacklistUpdate", err)
 		} else {
-			log.Println("BlocklistUpdate", entries)
+			fmt.Printf("\rBlacklistUpdate: %d", entries)
 		}
 	}()
 
