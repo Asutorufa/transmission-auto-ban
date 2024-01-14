@@ -1,6 +1,6 @@
 #
 
-it just ban who use bt client name in blacklist.  
+it just ban which bt client in [blocklist](https://github.com/Asutorufa/transmission-auto-ban/blob/main/blacklist.go#L7).  
 >maybe libtorrent and gt0003 need specify check method.  
 
 ## usage

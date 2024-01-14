@@ -6,7 +6,7 @@ import "regexp"
 
 var blocklist = []string{
 	"-(XL|SD|XF|QD|BN|DL|TS)(\\d+)-",
-	`((\d+.\d+.\d+.\d+|cacao_torrent))`,
+	`cacao_torrent`,
 
 	// Offline Downloader filter
 	"-LT(1220|2070)-",
