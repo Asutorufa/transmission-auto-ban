@@ -69,7 +69,7 @@ func itApply(ipt *iptables.IPTables, addresses []string) error {
 		return err
 	}
 
-	if len(addresses) == 0 || !ok {
+	if len(addresses) == 0 && !ok {
 		return nil
 	}
 
