@@ -21,6 +21,8 @@ var blocklist = []string{
 	"thunder",
 	`gt[[:digit:]]{4}`,
 	`GT[[:digit:]]{4}`,
+	`dt[[:digit:]]{4}`,
+	`DT[[:digit:]]{4}`,
 	"xl0012",
 	"xf",
 	"dandanplay",
