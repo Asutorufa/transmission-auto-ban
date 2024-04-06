@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"net/netip"
 	"strings"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -39,6 +40,16 @@ func it(addresses []string) error {
 	ip6 := []string{}
 
 	for _, v := range addresses {
+		prefix, err := netip.ParsePrefix(v)
+		if err == nil {
+			if prefix.Addr().Unmap().Is4() {
+				ip4 = append(ip4, v)
+			} else {
+				ip6 = append(ip6, v)
+			}
+			continue
+		}
+
 		if ip := net.ParseIP(v); ip != nil {
 			if ip.To4() != nil {
 				ip4 = append(ip4, v)
@@ -106,16 +117,17 @@ func itApply(ipt *iptables.IPTables, addresses []string) error {
 		}
 
 		pi := strings.Index(v, "-d ")
-		ei := strings.Index(v, "/32")
-		if ei == -1 {
-			ei = strings.Index(v, "/128")
-		}
-
-		if pi == -1 || ei == -1 {
+		if pi == -1 {
 			continue
 		}
 
-		v = v[pi+3 : ei]
+		ei := strings.Index(v[pi+3:], " ")
+		if ei == -1 {
+			continue
+		}
+
+		v = strings.TrimSuffix(v[pi+3:][:ei], "/32")
+		v = strings.TrimSuffix(v, "/128")
 
 		if addressMap[v] {
 			delete(addressMap, v)

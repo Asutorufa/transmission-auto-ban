@@ -226,7 +226,7 @@ func run(cli *transmissionrpc.Client, path string) error {
 	}
 
 	if iptEnabled {
-		if err := it(addresses); err != nil {
+		if err := it(append(addresses, ips...)); err != nil {
 			log.Println("it", err)
 		}
 	}
