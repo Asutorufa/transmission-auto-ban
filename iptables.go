@@ -126,8 +126,18 @@ func itApply(ipt *iptables.IPTables, addresses []string) error {
 			continue
 		}
 
-		v = strings.TrimSuffix(v[pi+3:][:ei], "/32")
-		v = strings.TrimSuffix(v, "/128")
+		addr, err := netip.ParsePrefix(v[pi+3:][:ei])
+		if err != nil {
+			continue
+		}
+
+		v := addr.String()
+
+		if addr.Addr().Is4() && addr.Bits() == 32 {
+			v = addr.Addr().String()
+		} else if addr.Addr().Is6() && addr.Bits() == 128 {
+			v = addr.Addr().String()
+		}
 
 		if addressMap[v] {
 			delete(addressMap, v)

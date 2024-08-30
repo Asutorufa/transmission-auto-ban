@@ -27,10 +27,6 @@ type entry struct {
 	client string
 }
 
-var addBlock func(name ...entry) = func(name ...entry) {}
-
-var rangeBlock func(f func(tx *bbolt.Bucket, v entry), expireDuration time.Duration) = func(f func(tx *bbolt.Bucket, v entry), expireDuration time.Duration) {}
-
 func main() {
 	blockfile := flag.String("file", "blocklist.txt", "file path")
 	dbfile := flag.String("db", "blocklist.db", "blocklist db path")
@@ -39,63 +35,9 @@ func main() {
 	flag.BoolVar(&iptEnabled, "iptables", false, "enable iptables")
 	flag.Parse()
 
-	_ = os.MkdirAll(filepath.Dir(*dbfile), 0755)
-	db, err := bbolt.Open(*dbfile, 0666, nil)
+	db, err := NewDB(*dbfile)
 	if err != nil {
 		panic(err)
-	}
-
-	addBlock = func(name ...entry) {
-		_ = db.Batch(func(tx *bbolt.Tx) error {
-			b, err := tx.CreateBucketIfNotExists([]byte("blocklist"))
-			if err != nil {
-				return err
-			}
-
-			nowBytes := uint64(time.Now().Unix())
-
-			for _, v := range name {
-				_ = b.Put([]byte(v.addr), NewT(nowBytes, v.client))
-			}
-
-			return nil
-		})
-	}
-
-	rangeBlock = func(f func(tx *bbolt.Bucket, v entry), expireDuration time.Duration) {
-		_ = db.Batch(func(tx *bbolt.Tx) error {
-			b, err := tx.CreateBucketIfNotExists([]byte("blocklist"))
-			if err != nil {
-				return err
-			}
-
-			now := time.Now().Unix()
-			_ = b.ForEach(func(k, v []byte) error {
-				if len(v) < 8 {
-					_ = b.Delete(k)
-					return nil
-				}
-
-				t := t(v)
-
-				timeBytes := t.Time()
-
-				if time.Second*(time.Duration(now)-time.Duration(timeBytes)) > expireDuration {
-					_ = b.Delete(k)
-					return nil
-				}
-
-				f(b, entry{
-					time:   timeBytes,
-					addr:   string(k),
-					client: t.Client(),
-				})
-
-				return nil
-			})
-
-			return nil
-		})
 	}
 
 	url, err := url.Parse(*rpc)
@@ -118,16 +60,26 @@ func main() {
 		f.Close()
 	}
 
-	timer := time.NewTicker(time.Minute * 2)
-	defer timer.Stop()
+	initRule(filepath.Dir(*dbfile))
+
+	tban := &TBan{db, cli, *blockfile}
+
 	go func() {
-		if err := run(cli, *blockfile); err != nil {
-			log.Println("run", err)
-		}
+		timer := time.NewTicker(time.Minute * 2)
+		defer timer.Stop()
+
+		tban.Run()
 		for range timer.C {
-			if err := run(cli, *blockfile); err != nil {
-				log.Println("run", err)
-			}
+			tban.Run()
+		}
+	}()
+
+	go func() {
+		timer := time.NewTicker(time.Hour)
+		defer timer.Stop()
+
+		for range timer.C {
+			refreshRule(filepath.Dir(*dbfile))
 		}
 	}()
 
@@ -136,8 +88,37 @@ func main() {
 	}
 }
 
-func run(cli *transmissionrpc.Client, path string) error {
-	at, err := cli.TorrentGetAll(context.Background())
+func isToStop(v transmissionrpc.Torrent) bool {
+	if v.UploadRatio != nil && *v.UploadRatio >= 3 {
+		return true
+	} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*6 &&
+		v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
+		return true
+	} else if v.UploadRatio != nil && *v.UploadRatio >= 2.2 &&
+		v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*3 &&
+		v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
+		return true
+	} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*12 {
+		return true
+	}
+
+	return false
+}
+
+type TBan struct {
+	db   *DB
+	cli  *transmissionrpc.Client
+	path string
+}
+
+func (t *TBan) Run() {
+	if err := t.run(); err != nil {
+		log.Println("run", err)
+	}
+}
+
+func (t *TBan) run() error {
+	at, err := t.cli.TorrentGetAll(context.Background())
 	if err != nil {
 		return err
 	}
@@ -151,16 +132,7 @@ func run(cli *transmissionrpc.Client, path string) error {
 			continue
 		}
 
-		if v.UploadRatio != nil && *v.UploadRatio >= 3 {
-			stopTorrents = append(stopTorrents, *v.ID)
-		} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*6 &&
-			v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
-			stopTorrents = append(stopTorrents, *v.ID)
-		} else if v.UploadRatio != nil && *v.UploadRatio >= 2.2 &&
-			v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*3 &&
-			v.TotalSize != nil && *v.TotalSize < cunits.Gibit*5 {
-			stopTorrents = append(stopTorrents, *v.ID)
-		} else if v.AddedDate != nil && time.Since(*v.AddedDate) > time.Hour*24*30*12 {
+		if isToStop(v) {
 			stopTorrents = append(stopTorrents, *v.ID)
 		}
 
@@ -179,10 +151,10 @@ func run(cli *transmissionrpc.Client, path string) error {
 		}
 	}
 
-	addBlock(clientAddress...)
+	t.db.addBlock(clientAddress...)
 
 	defer func() {
-		entries, err := cli.BlocklistUpdate(context.Background())
+		entries, err := t.cli.BlocklistUpdate(context.Background())
 		if err != nil {
 			log.Println("BlacklistUpdate", err)
 		} else {
@@ -190,71 +162,60 @@ func run(cli *transmissionrpc.Client, path string) error {
 		}
 	}()
 
-	f, err := os.OpenFile(path, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	w, err := NewBlacklistWriter(t.path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	fgz, err := os.OpenFile(path+".gz", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	gw := gzip.NewWriter(fgz)
-	defer gw.Close()
-
-	bw := bufio.NewWriter(io.MultiWriter(f, gw))
-	defer bw.Flush()
-
-	// , HQ ENTERTAINMENT:71.127.117.96-71.127.117.103
-	// _, _ = fmt.Fprintf(bw, "Test%d%s:%s-%s\n", 0, "", "127.0.0.1", "127.0.0.1")
+	defer w.Close()
 
 	addresses := []string{}
-	rangeBlock(func(tx *bbolt.Bucket, v entry) {
-		// _, _ = fmt.Fprintf(bw, "Autogen%s%d:%s-%s\n",
-		// strings.ReplaceAll(v.client, "-", ""), v.time, v.addr, v.addr)
-
+	t.db.rangeBlock(func(tx *bbolt.Bucket, v entry) {
 		addresses = append(addresses, v.addr)
-		_, _ = fmt.Fprintf(bw, "Autogen[%s]:%s-%s\n", v.client, v.addr, v.addr)
+		_, _ = fmt.Fprintf(w, "Autogen[%s]:%s-%s\n", v.client, v.addr, v.addr)
 	}, time.Hour*24*2)
 
 	if len(stopTorrents) > 0 {
 		log.Println("stop torrents", stopTorrents)
-		_ = cli.TorrentStopIDs(context.Background(), stopTorrents)
+		_ = t.cli.TorrentStopIDs(context.Background(), stopTorrents)
 	}
 
 	if iptEnabled {
-		if err := it(append(addresses, ips...)); err != nil {
-			log.Println("it", err)
+		if err := nft(append(addresses, ips...)); err != nil {
+			log.Println("nft", err)
 		}
+
+		// if err := it(append(addresses, ips...)); err != nil {
+		// log.Println("it", err)
+		// }
+	} else {
+		restartTorrents(t.cli, torrents)
 	}
 
-	if iptEnabled || len(torrents) <= 0 {
-		return nil
+	return nil
+}
+
+func restartTorrents(cli *transmissionrpc.Client, torrents []int64) {
+	if len(torrents) == 0 {
+		return
 	}
 
 	log.Println("restart torrents", torrents)
 
-	err = cli.TorrentStopIDs(context.Background(), torrents)
+	err := cli.TorrentStopIDs(context.Background(), torrents)
 	if err != nil {
 		log.Println("TorrentStopIDs", torrents, err)
-	} else {
-		count := 0
-	_retry:
+		return
+	}
+
+	for range 3 {
 		time.Sleep(time.Second * 3)
 		err = cli.TorrentStartIDs(context.Background(), torrents)
 		if err != nil {
 			log.Println("TorrentStartIDs", torrents, err)
-			count++
-			if count <= 3 {
-				goto _retry
-			}
+		} else {
+			break
 		}
 	}
-
-	return nil
 }
 
 type fm struct {
@@ -293,4 +254,131 @@ func (t t) Client() string {
 		return ""
 	}
 	return string(t[8:])
+}
+
+type blacklistWriter struct {
+	txt *os.File
+	fgz *os.File
+	gw  *gzip.Writer
+
+	bw *bufio.Writer
+}
+
+func NewBlacklistWriter(path string) (*blacklistWriter, error) {
+	f, err := os.OpenFile(path, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	fgz, err := os.OpenFile(path+".gz", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	gw := gzip.NewWriter(fgz)
+
+	bw := bufio.NewWriter(io.MultiWriter(f, gw))
+
+	return &blacklistWriter{f, fgz, gw, bw}, nil
+}
+
+func (bw *blacklistWriter) Close() error {
+	if err := bw.bw.Flush(); err != nil {
+		return err
+	}
+
+	if err := bw.gw.Close(); err != nil {
+		return err
+	}
+
+	if err := bw.fgz.Close(); err != nil {
+		return err
+	}
+
+	if err := bw.txt.Close(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (bw *blacklistWriter) Write(p []byte) (int, error) {
+	return bw.bw.Write(p)
+}
+
+type DB struct {
+	db *bbolt.DB
+}
+
+func NewDB(path string) (*DB, error) {
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		return nil, err
+	}
+	db, err := bbolt.Open(path, 0666, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DB{db}, nil
+}
+
+func (d *DB) addBlock(name ...entry) {
+	err := d.db.Batch(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("blocklist"))
+		if err != nil {
+			return err
+		}
+
+		nowBytes := uint64(time.Now().Unix())
+
+		for _, v := range name {
+			_ = b.Put([]byte(v.addr), NewT(nowBytes, v.client))
+		}
+
+		return nil
+	})
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (d *DB) rangeBlock(f func(tx *bbolt.Bucket, v entry), expireDuration time.Duration) {
+	err := d.db.Batch(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("blocklist"))
+		if err != nil {
+			return err
+		}
+
+		now := time.Now().Unix()
+		_ = b.ForEach(func(k, v []byte) error {
+			if len(v) < 8 {
+				_ = b.Delete(k)
+				return nil
+			}
+
+			t := t(v)
+
+			timeBytes := t.Time()
+
+			if time.Second*(time.Duration(now)-time.Duration(timeBytes)) > expireDuration {
+				_ = b.Delete(k)
+				return nil
+			}
+
+			f(b, entry{
+				time:   timeBytes,
+				addr:   string(k),
+				client: t.Client(),
+			})
+
+			return nil
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		log.Println(err)
+	}
 }

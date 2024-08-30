@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestBlacklist(t *testing.T) {
 	t.Log(ips)

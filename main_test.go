@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"regexp"
 	"strings"
 	"testing"
@@ -36,4 +37,8 @@ func TestIptables(t *testing.T) {
 	v = strings.TrimSuffix(v, "/128")
 
 	t.Log(v)
+}
+
+func TestToCidr(t *testing.T) {
+	t.Log(ToCidr(net.ParseIP("113.27.47.0"), net.ParseIP("113.27.47.255")))
 }
