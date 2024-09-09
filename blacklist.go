@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"os"
@@ -134,14 +134,14 @@ func filter(ips []string) []string {
 func initRule(path string) {
 	b, err := os.ReadFile(filepath.Join(path, "all.txt"))
 	if err != nil {
-		log.Println(err)
+		slog.Error("read all.txt failed", "err", err)
 		refreshRule(path)
 		return
 	}
 
 	z, err := os.ReadFile(filepath.Join(path, "custom.txt"))
 	if err != nil {
-		log.Println(err)
+		slog.Error("read custom.txt failed", "err", err)
 	}
 
 	ips = filter(append(strings.Split(string(b)+"\n"+string(z), "\n"), othersRules...))
@@ -153,29 +153,30 @@ func refreshRule(path string) {
 		return
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		data, _ := io.ReadAll(resp.Body)
-		log.Println(resp.StatusCode, string(data))
+		slog.Error("refreshRule", "status", resp.StatusCode, "body", string(data))
 		return
 	}
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Println(err)
+		slog.Error("readAll", "err", err)
 		return
 	}
 
 	z, err := os.ReadFile(filepath.Join(path, "custom.txt"))
 	if err != nil {
-		log.Println(err)
+		slog.Error("readFile", "err", err)
 	}
 	ips = filter(append(strings.Split(string(b)+"\n"+string(z), "\n"), othersRules...))
 
 	sh256 := sha256.Sum256(b)
-	log.Println("refreshRule", len(ips), hex.EncodeToString(sh256[:]))
+	slog.Info("refreshRule", "ips", len(ips), "sha256", hex.EncodeToString(sh256[:]))
 
 	err = os.WriteFile(filepath.Join(path, "all.txt"), b, 0644)
 	if err != nil {
-		log.Println(err)
+		slog.Error("writeFile", "err", err)
 		return
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,6 +35,10 @@ func main() {
 	flag.BoolVar(&iptEnabled, "iptables", false, "enable iptables")
 	flag.Parse()
 
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	})))
 	db, err := NewDB(*dbfile)
 	if err != nil {
 		panic(err)
@@ -113,7 +117,7 @@ type TBan struct {
 
 func (t *TBan) Run() {
 	if err := t.run(); err != nil {
-		log.Println("run", err)
+		slog.Error("run", "err", err)
 	}
 }
 
@@ -146,7 +150,7 @@ func (t *TBan) run() error {
 				if v.ID != nil {
 					torrents = append(torrents, *v.ID)
 				}
-				fmt.Println(p.Address, p.ClientName)
+				slog.Info("torrent", "address", p.Address, "client", p.ClientName)
 			}
 		}
 	}
@@ -156,9 +160,9 @@ func (t *TBan) run() error {
 	defer func() {
 		entries, err := t.cli.BlocklistUpdate(context.Background())
 		if err != nil {
-			log.Println("BlacklistUpdate", err)
+			slog.Error("BlocklistUpdate", "err", err)
 		} else {
-			fmt.Printf("\rBlacklistUpdate: %d", entries)
+			slog.Info("BlocklistUpdate", "entries", entries)
 		}
 	}()
 
@@ -175,13 +179,13 @@ func (t *TBan) run() error {
 	}, time.Hour*24*2)
 
 	if len(stopTorrents) > 0 {
-		log.Println("stop torrents", stopTorrents)
+		slog.Info("stop torrents", "torrents", stopTorrents)
 		_ = t.cli.TorrentStopIDs(context.Background(), stopTorrents)
 	}
 
 	if iptEnabled {
 		if err := nft(append(addresses, ips...)); err != nil {
-			log.Println("nft", err)
+			slog.Error("nftable apply failed", "err", err)
 		}
 
 		// if err := it(append(addresses, ips...)); err != nil {
@@ -199,11 +203,11 @@ func restartTorrents(cli *transmissionrpc.Client, torrents []int64) {
 		return
 	}
 
-	log.Println("restart torrents", torrents)
+	slog.Info("restart torrents", "torrents", torrents)
 
 	err := cli.TorrentStopIDs(context.Background(), torrents)
 	if err != nil {
-		log.Println("TorrentStopIDs", torrents, err)
+		slog.Error("TorrentStopIDs failed", "err", err)
 		return
 	}
 
@@ -211,7 +215,7 @@ func restartTorrents(cli *transmissionrpc.Client, torrents []int64) {
 		time.Sleep(time.Second * 3)
 		err = cli.TorrentStartIDs(context.Background(), torrents)
 		if err != nil {
-			log.Println("TorrentStartIDs", torrents, err)
+			slog.Error("TorrentStartIDs", "err", err, "torrents", torrents)
 		} else {
 			break
 		}
@@ -339,7 +343,7 @@ func (d *DB) addBlock(name ...entry) {
 		return nil
 	})
 	if err != nil {
-		log.Println(err)
+		slog.Error("addBlock", "err", err)
 	}
 }
 
@@ -379,6 +383,6 @@ func (d *DB) rangeBlock(f func(tx *bbolt.Bucket, v entry), expireDuration time.D
 	})
 
 	if err != nil {
-		log.Println(err)
+		slog.Error("rangeBlock", "err", err)
 	}
 }

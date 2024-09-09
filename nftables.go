@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/netip"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"golang.org/x/sys/unix"
 )
 
 var initNftTable bool
@@ -112,7 +112,7 @@ func addElement(c *nftables.Conn, addrs []string) error {
 
 	addSets, deleteSets := diff(oldSets, newSets)
 
-	fmt.Println("delete", len(deleteSets), "add", len(addSets))
+	slog.Info("apply elements", "add", len(addSets), "delete", len(deleteSets))
 
 	table := &nftables.Table{
 		Name:   "transmission-auto-ban",
@@ -129,53 +129,64 @@ func addElement(c *nftables.Conn, addrs []string) error {
 	var resp6 []nftables.SetElement
 
 	for _, v := range deleteSets {
+		resp4 = resp4[:0]
+		resp6 = resp6[:0]
+
 		if v.Is6 {
 			resp6 = append(resp6, v.Start, v.End)
 		} else {
 			resp4 = append(resp4, v.Start, v.End)
 		}
-	}
 
-	if len(resp4) > 0 {
-		er := c.SetDeleteElements(v4set, resp4)
-		if er != nil {
-			log.Println("deleteElements", er)
+		if len(resp4) > 0 {
+			er := c.SetDeleteElements(v4set, resp4)
+			if er != nil {
+				slog.Error("delete ipv4 elements", "err", er)
+			}
+		}
+
+		if len(resp6) > 0 {
+			er := c.SetDeleteElements(v6set, resp6)
+			if er != nil {
+				slog.Error("delete ipv6 elements", "err", er)
+			}
+		}
+
+		if err := c.Flush(); err != nil {
+			slog.Warn("flush", "err", err)
 		}
 	}
-
-	if len(resp6) > 0 {
-		er := c.SetDeleteElements(v6set, resp6)
-		if er != nil {
-			log.Println("deleteElements", er)
-		}
-	}
-
-	resp4 = resp4[:0]
-	resp6 = resp6[:0]
 
 	for _, v := range addSets {
+		resp4 = resp4[:0]
+		resp6 = resp6[:0]
+
 		if v.Is6 {
 			resp6 = append(resp6, v.Start, v.End)
 		} else {
 			resp4 = append(resp4, v.Start, v.End)
 		}
-	}
 
-	if len(resp4) > 0 {
-		er := c.SetAddElements(v4set, resp4)
-		if er != nil {
-			log.Println("addElement", er)
+		if len(resp4) > 0 {
+			er := c.SetAddElements(v4set, resp4)
+			if er != nil {
+				slog.Error("addElement", "err", er)
+			}
+		}
+
+		if len(resp6) > 0 {
+			er := c.SetAddElements(v6set, resp6)
+			if er != nil {
+				slog.Error("addElement", "err", er)
+			}
+		}
+
+		if err := c.Flush(); err != nil {
+			slog.Warn("flush", "err", err)
 		}
 	}
 
-	if len(resp6) > 0 {
-		er := c.SetAddElements(v6set, resp6)
-		if er != nil {
-			log.Println("addElement", er)
-		}
-	}
-
-	return c.Flush()
+	return nil
 }
 
 func rangeTwo[T any](x []T) func(f func(T, T) bool) {
@@ -197,7 +208,7 @@ func getExistSet(c *nftables.Conn) map[RangeKey]NftableElement {
 			Name:  setName,
 		})
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("get set elements", "set", setName, "err", err)
 			continue
 		}
 
@@ -364,9 +375,15 @@ func (n *Nftables) AddDropMatchSetRule(setName string, v6, dst bool) {
 				SetName:        setName,
 			},
 			&expr.Counter{},
-			&expr.Verdict{
-				Kind: expr.VerdictDrop,
+			&expr.Reject{
+				Type: unix.NFT_REJECT_ICMP_UNREACH,
+				// Network Unreachable  0
+				// Host Unreachable     1
+				// Protocol Unreachable 2
+				// Port Unreachable     3
+				Code: 0,
 			},
+			// &expr.Verdict{Kind: expr.VerdictDrop},
 		},
 	})
 }

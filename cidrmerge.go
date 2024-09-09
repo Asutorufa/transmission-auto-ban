@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/bits"
 	"net"
 	"net/netip"
@@ -24,7 +24,7 @@ func Merge(text []string) []IRange {
 	for _, v := range text {
 		r, err := parse(v)
 		if err != nil {
-			log.Println("parse", v, err)
+			slog.Error("parse", "err", err)
 			continue
 		}
 
@@ -44,11 +44,6 @@ func Merge(text []string) []IRange {
 	// }
 
 	// return resp
-}
-
-func addrNext(addr net.IP) net.IP {
-	a, _ := netip.AddrFromSlice(addr)
-	return a.Next().AsSlice()
 }
 
 // maybe IpWrapper, Range or IpNetWrapper is returned
@@ -111,7 +106,7 @@ func (r *Range) familyLength() int {
 	return len(r.start)
 }
 func (r *Range) ToIp() net.IP {
-	if bytes.Equal(r.start, r.end) {
+	if r.start.Equal(r.end) {
 		return r.start
 	}
 	return nil

@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net"
 	"net/netip"
 	"strings"
@@ -147,24 +147,24 @@ func itApply(ipt *iptables.IPTables, addresses []string) error {
 	}
 
 	if len(addressMap) > 0 {
-		log.Println("drop", addressMap)
+		slog.Info("drop", "addrs", addressMap)
 	}
 
 	if len(deleteAddress) > 0 {
-		log.Println("remove drop", deleteAddress)
+		slog.Info("remove drop", "addrs", deleteAddress)
 	}
 
 	for v := range addressMap {
 		err = ipt.AppendUnique("filter", iptablesChain, "-d", v, "-j", "DROP")
 		if err != nil {
-			log.Println(err)
+			slog.Error("appendUnique", "err", err)
 		}
 	}
 
 	for _, v := range deleteAddress {
 		err = ipt.Delete("filter", iptablesChain, "-d", v, "-j", "DROP")
 		if err != nil {
-			log.Println(err)
+			slog.Error("delete", "err", err)
 		}
 	}
 
