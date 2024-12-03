@@ -125,66 +125,26 @@ func addElement(c *nftables.Conn, addrs []string) error {
 	// c.FlushSet(v4set)
 	// c.FlushSet(v6set)
 
-	var resp4 []nftables.SetElement
-	var resp6 []nftables.SetElement
-
-	for _, v := range deleteSets {
-		resp4 = resp4[:0]
-		resp6 = resp6[:0]
-
-		if v.Is6 {
-			resp6 = append(resp6, v.Start, v.End)
-		} else {
-			resp4 = append(resp4, v.Start, v.End)
-		}
-
-		if len(resp4) > 0 {
-			er := c.SetDeleteElements(v4set, resp4)
-			if er != nil {
-				slog.Error("delete ipv4 elements", "err", er)
+	rangeSet := func(sets []NftableElement, operate func(set *nftables.Set, elements []nftables.SetElement) error) {
+		for _, v := range sets {
+			set := v4set
+			if v.Is6 {
+				set = v6set
 			}
-		}
 
-		if len(resp6) > 0 {
-			er := c.SetDeleteElements(v6set, resp6)
-			if er != nil {
-				slog.Error("delete ipv6 elements", "err", er)
-			}
-		}
-
-		if err := c.Flush(); err != nil {
-			slog.Warn("flush", "err", err)
-		}
-	}
-
-	for _, v := range addSets {
-		resp4 = resp4[:0]
-		resp6 = resp6[:0]
-
-		if v.Is6 {
-			resp6 = append(resp6, v.Start, v.End)
-		} else {
-			resp4 = append(resp4, v.Start, v.End)
-		}
-
-		if len(resp4) > 0 {
-			er := c.SetAddElements(v4set, resp4)
+			er := operate(set, []nftables.SetElement{v.Start, v.End})
 			if er != nil {
 				slog.Error("addElement", "err", er)
 			}
-		}
 
-		if len(resp6) > 0 {
-			er := c.SetAddElements(v6set, resp6)
-			if er != nil {
-				slog.Error("addElement", "err", er)
+			if err := c.Flush(); err != nil {
+				slog.Warn("flush", "err", err)
 			}
 		}
-
-		if err := c.Flush(); err != nil {
-			slog.Warn("flush", "err", err)
-		}
 	}
+
+	rangeSet(deleteSets, c.SetDeleteElements)
+	rangeSet(addSets, c.SetAddElements)
 
 	return nil
 }
