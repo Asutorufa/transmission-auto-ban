@@ -70,15 +70,13 @@ func parse(text string) (IRange, error) {
 }
 
 func parseIp(str string) net.IP {
-	for _, b := range str {
-		switch b {
-		case '.':
-			return net.ParseIP(str).To4()
-		case ':':
-			return net.ParseIP(str).To16()
-		}
+	ip := net.ParseIP(str)
+
+	if ip.To4() != nil {
+		return ip.To4()
 	}
-	return nil
+
+	return ip.To16()
 }
 
 func ipToString(ip net.IP) string {
