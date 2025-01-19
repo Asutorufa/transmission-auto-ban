@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/hekmon/cunits/v2"
 	"github.com/hekmon/transmissionrpc/v3"
 	"go.etcd.io/bbolt"
+	"gvisor.dev/gvisor/pkg/tcpip"
 )
 
 type entry struct {
@@ -177,6 +179,27 @@ func (t *TBan) run() error {
 		addresses = append(addresses, v.addr)
 		_, _ = fmt.Fprintf(w, "Autogen[%s]:%s-%s\n", v.client, v.addr, v.addr)
 	}, time.Hour*24*2)
+
+	for _, v := range ips {
+		addr, err := netip.ParseAddr(v)
+		if err == nil {
+			_, _ = fmt.Fprintf(w, "Autogen[%s]:%s-%s\n", "pbh", addr.Unmap().String(), addr.Unmap().String())
+			continue
+		}
+
+		prefix, err := netip.ParsePrefix(v)
+		if err == nil {
+			addr := tcpip.AddressWithPrefix{Address: tcpip.AddrFromSlice(prefix.Addr().AsSlice()), PrefixLen: prefix.Bits()}
+
+			subnet := addr.Subnet()
+			last := subnet.Broadcast()
+
+			_, _ = fmt.Fprintf(w, "Autogen[%s]:%s-%s\n", "pbh", prefix.Addr().Unmap().String(), netip.MustParseAddr(last.String()).Unmap().String())
+			continue
+		}
+
+		continue
+	}
 
 	if len(stopTorrents) > 0 {
 		slog.Info("stop torrents", "torrents", stopTorrents)

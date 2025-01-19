@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"github.com/samber/lo"
 	"golang.org/x/sys/unix"
 )
 
@@ -138,7 +139,7 @@ func addElement(c *nftables.Conn, addrs []string) error {
 			}
 
 			if err := c.Flush(); err != nil {
-				slog.Warn("flush", "err", err)
+				slog.Warn("flush", "err", err, "v6", v.Is6, "start", v.Start, "end", v.End)
 			}
 		}
 	}
@@ -208,8 +209,8 @@ func rangeToMap(x []IRange) map[RangeKey]NftableElement {
 			last := addOne(lastIp(v))
 
 			resp[RangeKey{}.FromRanage(v.IP, last)] = NftableElement{
-				Start: nftables.SetElement{Key: v.IP},
-				End:   nftables.SetElement{Key: last, IntervalEnd: true},
+				Start: nftables.SetElement{Key: lo.If(v.IP.To4() != nil, v.IP.To4()).Else(v.IP)},
+				End:   nftables.SetElement{Key: lo.If(last.To4() != nil, last.To4()).Else(last), IntervalEnd: true},
 				Is6:   v.IP.To4() == nil,
 			}
 		}
